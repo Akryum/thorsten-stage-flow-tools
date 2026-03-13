@@ -242,12 +242,15 @@ async function sendQuickEmoji(emoji: string) {
         </div>
       </div>
 
+      <div class="border-[4px] border-black bg-white p-8">
+        <UiButton size="small" variant="secondary" @click="refreshQuestion">
+          🔄 {{ t('refreshButton') }}
+        </UiButton>
+      </div>
+
       <!-- Active Question -->
       <div v-if="activeQuestion" class="border-[4px] border-black bg-white p-8">
         <div class="mb-4 flex items-center justify-between">
-          <UiButton size="small" variant="secondary" @click="refreshQuestion">
-            🔄 {{ t('refreshButton') }}
-          </UiButton>
           <div
             v-if="activeQuestion.is_locked"
             class="whitespace-nowrap bg-black px-4 py-2 text-sm
