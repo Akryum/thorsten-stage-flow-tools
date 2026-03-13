@@ -18,7 +18,8 @@ System design and technical architecture of the quiz application.
 
 ### Storage
 
-- **Nitro `useStorage()`** - Pluggable storage with driver abstraction (filesystem for dev/Docker, Cloudflare KV for Workers)
+- **PostgreSQL** - Persistent relational storage for questions, options, and answers
+- **Drizzle ORM** - Typed schema, migrations, and query layer
 
 ## Application Structure
 
@@ -38,7 +39,7 @@ stage-flow-tools/
 │   └── utils/     # Server utilities
 ├── shared/        # Shared code (client + server)
 │   └── utils/     # Shared utilities
-├── .data/db/      # Local storage (dev/Docker, gitignored)
+├── drizzle/       # SQL migrations
 ├── data/          # Predefined questions source (Node.js only)
 └── docs/          # Project documentation
 ```
@@ -66,12 +67,12 @@ stage-flow-tools/
 
 ## Design Decisions
 
-### Why Nitro useStorage()?
+### Why Drizzle + PostgreSQL?
 
-- **Driver Abstraction** - Same code runs on filesystem (dev/Docker) and Cloudflare KV (Workers)
-- **Zero Config for Dev** - Filesystem driver works out of the box via `devStorage`
-- **Cloud-Ready** - Swap to Cloudflare KV by setting `NITRO_PRESET=cloudflare-module`
-- **Adequate Scale** - Perfect for presentation use case
+- **Typed Schema** - Tables and application code stay aligned
+- **Real Persistence** - Data survives restarts without JSON file storage
+- **Startup Migrations** - The Node/Docker runtime can bootstrap itself safely
+- **Good Fit** - The quiz domain maps cleanly to relational tables
 
 ### Why WebSockets?
 
@@ -109,7 +110,7 @@ stage-flow-tools/
 
 ### Authentication
 
-- **JWT Tokens** - Stateless authentication via `jose` library (Web Crypto API, works in Workers and Node.js)
+- **JWT Tokens** - Stateless authentication via `jose`
 - **HTTP-only Cookies** - Token storage
 - **Admin-only Routes** - Protected endpoints (async `verifyAdmin()`)
 

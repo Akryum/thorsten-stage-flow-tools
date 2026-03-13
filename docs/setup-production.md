@@ -14,15 +14,7 @@ Creates optimized production bundle in `.output/` directory.
 
 ## Deployment Options
 
-### 1. Cloudflare Workers (Primary)
-
-See the [Cloudflare Deployment Guide](deployment-cloudflare.md) for a step-by-step tutorial covering manual deploys, automated CI/CD via GitHub Actions, and the push script for seeding quiz data.
-
-```bash
-pnpm run deploy:cloudflare
-```
-
-### 2. Docker Container
+### 1. Docker Container
 
 See the [Docker Deployment Guide](deployment-docker.md).
 
@@ -36,9 +28,9 @@ EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]
 ```
 
-> Mount `/app/.data/db` to a persistent host path or named volume to preserve quiz data across container restarts. Without this, data is lost when the container is recreated.
+> The production setup expects PostgreSQL. In Docker Compose, persistence comes from the `postgres-data` volume.
 
-### 3. Node.js Server (VPS/Dedicated)
+### 2. Node.js Server (VPS/Dedicated)
 
 **Requirements:**
 
@@ -55,17 +47,12 @@ CMD ["node", ".output/server/index.mjs"]
    pm2 start .output/server/index.mjs --name quiz-app
    ```
 
-### 4. Platform-as-a-Service
-
-**Vercel:**
-
-- Note: File storage is ephemeral
-- Consider external database for persistence
+### 3. Platform-as-a-Service
 
 **Railway/Render:**
 
 - Full Node.js support
-- Persistent file storage available
+- PostgreSQL add-ons are available
 
 ## Environment Configuration
 
@@ -89,31 +76,7 @@ Store the generated secret in your environment management system or secrets mana
 
 ## Data Persistence
 
-### Cloudflare Workers
-
-Data is stored in Cloudflare KV - persists across deployments, globally replicated.
-
-### Docker / Node.js
-
-Data is stored in `.data/db/` on the local filesystem.
-
-**Ephemeral Platforms** (Vercel, some PaaS):
-
-- Data resets on redeploy
-- Not suitable for production quiz data
-
-**Persistent Platforms** (VPS, dedicated servers, Docker with a mounted volume):
-
-- Data persists in `.data/db/` across restarts when `/app/.data/db` is backed by persistent storage
-- Regular backups recommended
-
-### Migration to Database
-
-For high-availability production:
-
-1. Consider PostgreSQL/MySQL
-2. Use cloud database services
-3. Implement proper backup strategy
+Data is stored in PostgreSQL. Use regular database backups and monitor connection health in your hosting platform.
 
 ## Monitoring
 
@@ -135,7 +98,7 @@ Current architecture supports:
 
 - ~100-500 concurrent users
 - One active question at a time
-- File-based storage
+- PostgreSQL-backed storage
 
 ### Multi-Instance
 
@@ -152,7 +115,7 @@ For larger scale:
 Schedule cron job (Docker / Node.js):
 
 ```bash
-0 */6 * * * cp -r /app/.data/db /backups/data-$(date +\%Y\%m\%d-\%H\%M)
+0 */6 * * * docker exec stage-flow-tools-postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > /backups/data-$(date +\%Y\%m\%d-\%H\%M).sql
 ```
 
 ### Manual Backup
@@ -160,5 +123,5 @@ Schedule cron job (Docker / Node.js):
 Before updates:
 
 ```bash
-tar -czf quiz-backup-$(date +%Y%m%d).tar.gz .data/db/
+docker exec stage-flow-tools-postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > quiz-backup-$(date +%Y%m%d).sql
 ```

@@ -6,7 +6,7 @@ Deploy the application on your own Linux server using Docker Compose and a Traef
 
 - **Full control** - your server, your data, your rules.
 - **Works everywhere** - any Linux server with Docker installed.
-- **Data persistence** - JSON files stored directly on disk via volume mounts.
+- **Data persistence** - PostgreSQL data stored in a named Docker volume.
 - **Corporate-friendly** - runs behind firewalls and VPNs without external dependencies.
 - **Ready to use** - the current codebase runs natively on Node.js, no migration needed.
 
@@ -42,13 +42,14 @@ Edit the `.env` file and set a strong, unique `NUXT_JWT_SECRET`. You can generat
 openssl rand -base64 48
 ```
 
-Set a strong admin password as well:
+Set a strong admin password as well, and confirm `DATABASE_URL` matches the Compose service:
 
 ```bash
 # In .env:
 NUXT_ADMIN_USERNAME=admin
 NUXT_ADMIN_PASSWORD=<your-strong-password>
 NUXT_JWT_SECRET=<paste-output-from-openssl>
+DATABASE_URL=postgresql://stage_flow:stage_flow@postgres:5432/stage_flow_tools
 ```
 
 ### 3. Configure Docker Compose
@@ -76,7 +77,7 @@ The application will be accessible at your configured domain. Traefik will autom
 
 ## Data Persistence
 
-The `docker-compose.yml` file is configured to mount the local `./data` directory into the container at `/app/data`. This ensures that all application data (questions, answers, etc.) is persisted on the host machine, even if the container is removed or recreated.
+Quiz data is stored in PostgreSQL. The Compose file provisions a `postgres-data` named volume, so questions and answers survive container restarts and updates. The `./data` mount remains available only for optional `predefined-questions.json` imports.
 
 ## Maintenance
 
@@ -125,11 +126,9 @@ The `docker-compose.yml` labels configure Traefik routing:
 
 ### Data persistence
 
-The `docker-compose.yml` mounts `./data:/app/data`, mapping the host's `./data` directory into the container. All application data (questions, answers, admin credentials) is stored as JSON files in this directory. This means:
-
-- Data survives container restarts, rebuilds, and updates.
-- You can back up data by copying the `./data` directory.
-- You can inspect or edit data files directly on the host.
+- Quiz state lives in PostgreSQL.
+- `postgres-data` is the durable volume to back up.
+- `./data` is only for predefined question imports on startup.
 
 ### Security considerations
 

@@ -25,6 +25,15 @@ const newQuestion = ref<{
   answer_options: [{ text: '{\n  "en": ""\n}', emoji: '' }, { text: '{\n  "en": ""\n}', emoji: '' }],
   note: '{\n  "en": ""\n}',
 })
+const importForm = ref({
+  migrationName: '',
+  json: '',
+})
+const importFeedback = ref<{
+  type: 'success' | 'error'
+  message: string
+} | null>(null)
+const isImporting = ref(false)
 
 // Load questions
 const { data: fetchedQuestions, error: fetchError, refresh: loadQuestions } = useFetch<Question[]>('/api/questions')
@@ -186,6 +195,96 @@ function addOption() {
 function removeOption(index: number) {
   newQuestion.value.answer_options.splice(index, 1)
 }
+
+function clearImportFields() {
+  importForm.value = {
+    migrationName: '',
+    json: '',
+  }
+}
+
+function resetImportForm() {
+  clearImportFields()
+  importFeedback.value = null
+}
+
+async function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+
+  if (!file) {
+    return
+  }
+
+  try {
+    importForm.value.json = await file.text()
+    if (!importForm.value.migrationName.trim()) {
+      importForm.value.migrationName = `admin/${file.name}`
+    }
+    importFeedback.value = null
+  }
+  catch (error) {
+    logger_error('Failed to read question migration file:', error)
+    importFeedback.value = {
+      type: 'error',
+      message: t('failedReadImportFile'),
+    }
+  }
+  finally {
+    input.value = ''
+  }
+}
+
+async function handleImportQuestions() {
+  if (isImporting.value) return
+
+  isImporting.value = true
+  importFeedback.value = null
+
+  try {
+    const result = await $fetch<{
+      migrationName: string
+      createdCount: number
+      skipped: boolean
+    }>('/api/questions/import', {
+      method: 'POST',
+      body: {
+        migrationName: importForm.value.migrationName,
+        json: importForm.value.json,
+      },
+    })
+
+    await loadQuestions()
+
+    importFeedback.value = {
+      type: 'success',
+      message: result.skipped
+        ? t('importSkipped', { name: result.migrationName })
+        : t('importSuccess', { name: result.migrationName, count: result.createdCount }),
+    }
+
+    if (!result.skipped) {
+      clearImportFields()
+    }
+  }
+  catch (error: unknown) {
+    logger_error('Failed to import question migration:', error)
+    const message = error
+      && typeof error === 'object'
+      && 'statusMessage' in error
+      && typeof error.statusMessage === 'string'
+      ? error.statusMessage
+      : t('failedImportQuestions')
+
+    importFeedback.value = {
+      type: 'error',
+      message,
+    }
+  }
+  finally {
+    isImporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -307,6 +406,66 @@ function removeOption(index: number) {
         </form>
       </UiSection>
 
+      <UiSection>
+        <h2 class="section-heading">
+          {{ t('importQuestions') }}
+        </h2>
+        <form class="flex flex-col gap-5" @submit.prevent="handleImportQuestions">
+          <p class="text-sm text-gray-700">
+            {{ t('importHelp') }}
+          </p>
+
+          <UiInput
+            v-model="importForm.migrationName"
+            class="border-2 border-black p-3 text-base"
+            :placeholder="t('migrationNamePlaceholder')"
+            required
+          />
+
+          <div class="flex flex-col gap-3 border-2 border-dashed border-black bg-gray-100 p-4">
+            <label class="font-bold" for="question-import-file">{{ t('importFileLabel') }}</label>
+            <input
+              id="question-import-file"
+              accept=".json,application/json"
+              class="border-2 border-black bg-white p-3"
+              type="file"
+              @change="handleImportFile"
+            >
+          </div>
+
+          <textarea
+            v-model="importForm.json"
+            class="json-textarea min-h-[220px]"
+            :placeholder="t('importJsonPlaceholder')"
+            required
+          />
+
+          <p
+            v-if="importFeedback"
+            class="border-2 p-3 text-sm"
+            :class="importFeedback.type === 'success'
+              ? 'border-green-700 bg-green-100 text-green-900'
+              : 'border-red-700 bg-red-100 text-red-900'"
+          >
+            {{ importFeedback.message }}
+          </p>
+
+          <div class="flex items-center gap-3">
+            <UiButton :disabled="isImporting" type="submit">
+              {{ isImporting ? t('importingQuestions') : t('importQuestionsButton') }}
+            </UiButton>
+            <UiButton
+              :disabled="isImporting"
+              type="button"
+              variant="secondary"
+              @click="resetImportForm"
+            >
+              {{ t('clearImportForm') }}
+            </UiButton>
+          </div>
+        </form>
+      </UiSection>
+
       <!-- All Questions -->
       <UiSection>
         <h2 class="section-heading">
@@ -362,6 +521,18 @@ en:
   removeButton: Remove
   addOptionButton: Add Option
   createQuestion: Create Question
+  importQuestions: Import Questions
+  importHelp: Upload or paste a JSON array of questions and save it as a tracked migration.
+  migrationNamePlaceholder: "Migration name, e.g. admin/vuejs-amsterdam-2026.json"
+  importFileLabel: Load from JSON file
+  importJsonPlaceholder: Paste the JSON array here
+  importQuestionsButton: Import Questions
+  importingQuestions: Importing...
+  clearImportForm: Clear
+  importSuccess: 'Imported "{name}" with {count} new question(s).'
+  importSkipped: 'Skipped "{name}" because it was already applied.'
+  failedImportQuestions: Failed to import questions.
+  failedReadImportFile: Failed to read the selected JSON file.
   allQuestions: All Questions
   publishThisQuestion: Publish This Question
   validationQuestionEnRequired: "Question text must have a non-empty English (\"en\") value."
@@ -395,6 +566,18 @@ de:
   removeButton: Entfernen
   addOptionButton: Option hinzufügen
   createQuestion: Frage erstellen
+  importQuestions: Fragen importieren
+  importHelp: Lade ein JSON-Array mit Fragen hoch oder füge es ein und speichere es als nachverfolgbare Migration.
+  migrationNamePlaceholder: "Migrationsname, z.B. admin/vuejs-amsterdam-2026.json"
+  importFileLabel: Aus JSON-Datei laden
+  importJsonPlaceholder: JSON-Array hier einfügen
+  importQuestionsButton: Fragen importieren
+  importingQuestions: Importiere...
+  clearImportForm: Leeren
+  importSuccess: '"{name}" mit {count} neuen Frage(n) importiert.'
+  importSkipped: '"{name}" wurde übersprungen, da die Migration bereits angewendet wurde.'
+  failedImportQuestions: Fragen konnten nicht importiert werden.
+  failedReadImportFile: Die ausgewählte JSON-Datei konnte nicht gelesen werden.
   allQuestions: Alle Fragen
   publishThisQuestion: Diese Frage veröffentlichen
   validationQuestionEnRequired: "Fragetext muss einen nicht-leeren englischen (\"en\") Wert haben."
@@ -430,6 +613,18 @@ ja:
   removeButton: 削除
   addOptionButton: オプションを追加
   createQuestion: 質問を作成
+  importQuestions: 質問をインポート
+  importHelp: 質問のJSON配列をアップロードまたは貼り付けて、追跡可能なマイグレーションとして保存します。
+  migrationNamePlaceholder: "マイグレーション名 例: admin/vuejs-amsterdam-2026.json"
+  importFileLabel: JSONファイルから読み込む
+  importJsonPlaceholder: ここにJSON配列を貼り付け
+  importQuestionsButton: 質問をインポート
+  importingQuestions: インポート中...
+  clearImportForm: クリア
+  importSuccess: '"{name}" をインポートしました。新しい質問は {count} 件です。'
+  importSkipped: '"{name}" は既に適用済みのためスキップされました。'
+  failedImportQuestions: 質問のインポートに失敗しました。
+  failedReadImportFile: 選択したJSONファイルを読み込めませんでした。
   allQuestions: 全ての質問
   publishThisQuestion: この質問を公開
   validationQuestionEnRequired: "質問テキストには空でない英語（\"en\"）の値が必要です。"

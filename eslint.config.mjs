@@ -15,6 +15,7 @@ export default withNuxt(
       '.output/',
       'dist/',
       '.data/',
+      'drizzle/meta/',
       '.claude/skills/**/.skilld/',
       'pnpm-lock.yaml',
       'data/',

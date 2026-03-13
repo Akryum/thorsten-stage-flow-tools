@@ -1,53 +1,107 @@
 import { createId } from '@paralleldrive/cuid2'
+import { and, asc, desc, eq, inArray, or } from 'drizzle-orm'
 import type { H3Event } from 'h3'
-import type { Question, Results, Answer, InputQuestion } from '~/types'
+import { answers, questionOptions, questions } from '../database/schema'
+import { useDrizzle } from './drizzle'
+import { getPeers } from './websocket'
+import type { Answer, InputQuestion, Question, Results } from '~/types'
 
-const storage = useStorage('data')
-
-// In-memory store for emoji cooldowns
 const emojiCooldowns = new Map<string, number>()
 
-// Track whether storage has been initialized
-let storageInitialized = false
+type QuestionRow = typeof questions.$inferSelect
+type QuestionOptionRow = typeof questionOptions.$inferSelect
+type AnswerRow = typeof answers.$inferSelect
 
-/** Initialize storage with default values if keys do not exist yet. */
-export async function initStorage(event?: H3Event) {
-  if (storageInitialized) return
-  try {
-    // Initialize questions
-    if (!await storage.hasItem('questions')) {
-      await storage.setItem('questions', [])
-    }
+function nowIso() {
+  return new Date().toISOString()
+}
 
-    // Initialize answers
-    if (!await storage.hasItem('answers')) {
-      await storage.setItem('answers', [])
-    }
-
-    // Initialize admin credentials from runtime config
-    if (!await storage.hasItem('admin')) {
-      const config = event
-        ? useRuntimeConfig(event)
-        : { adminUsername: 'admin', adminPassword: '123' }
-      await storage.setItem('admin', {
-        username: config.adminUsername,
-        password: config.adminPassword,
-      })
-    }
-
-    storageInitialized = true
-  }
-  catch (error: unknown) {
-    logger_error('Storage initialization error:', error)
+function mapOption(row: QuestionOptionRow) {
+  return {
+    text: row.text,
+    emoji: row.emoji || undefined,
   }
 }
 
-/**
- * Process predefined questions from a JSON array and merge them into storage.
- * Skips questions whose `question_text.en` already exists.
- */
-export async function processPredefinedQuestions(predefinedQuestions: InputQuestion[]): Promise<void> {
+function mapAnswer(row: AnswerRow): Answer {
+  return {
+    id: row.id,
+    question_id: row.questionId,
+    user_id: row.userId,
+    user_nickname: row.userNickname,
+    selected_answer: row.selectedAnswer,
+    timestamp: row.updatedAt,
+  }
+}
+
+function mapQuestion(row: QuestionRow, optionRows: QuestionOptionRow[]): Question {
+  return {
+    id: row.id,
+    key: row.key,
+    question_text: row.questionText,
+    answer_options: optionRows.map(mapOption),
+    is_active: row.isActive,
+    is_locked: row.isLocked,
+    createdAt: row.createdAt,
+    alreadyPublished: row.alreadyPublished,
+    note: row.note || undefined,
+  }
+}
+
+async function loadQuestionOptions(questionIds: string[]) {
+  if (questionIds.length === 0) {
+    return new Map<string, QuestionOptionRow[]>()
+  }
+
+  const db = useDrizzle()
+  const rows = await db
+    .select()
+    .from(questionOptions)
+    .where(inArray(questionOptions.questionId, questionIds))
+    .orderBy(asc(questionOptions.questionId), asc(questionOptions.sortOrder))
+
+  const optionsByQuestionId = new Map<string, QuestionOptionRow[]>()
+
+  for (const row of rows) {
+    const existing = optionsByQuestionId.get(row.questionId)
+    if (existing) {
+      existing.push(row)
+    }
+    else {
+      optionsByQuestionId.set(row.questionId, [row])
+    }
+  }
+
+  return optionsByQuestionId
+}
+
+async function hydrateQuestions(questionRows: QuestionRow[]): Promise<Question[]> {
+  const optionsByQuestionId = await loadQuestionOptions(questionRows.map(row => row.id))
+  return questionRows.map(row => mapQuestion(row, optionsByQuestionId.get(row.id) || []))
+}
+
+async function getQuestionById(questionId: string) {
+  const db = useDrizzle()
+  const [questionRow] = await db
+    .select()
+    .from(questions)
+    .where(eq(questions.id, questionId))
+    .limit(1)
+
+  if (!questionRow) {
+    return undefined
+  }
+
+  const [question] = await hydrateQuestions([questionRow])
+  return question
+}
+
+export async function processPredefinedQuestions(
+  predefinedQuestions: InputQuestion[],
+  options: { log?: (message: string) => void } = {},
+): Promise<void> {
   if (!Array.isArray(predefinedQuestions) || predefinedQuestions.length === 0) return
+  const log = options.log || console.info
 
   for (const q of predefinedQuestions) {
     if (typeof q.question_text?.en !== 'string' || q.question_text.en.trim() === '') {
@@ -61,141 +115,216 @@ export async function processPredefinedQuestions(predefinedQuestions: InputQuest
     }
   }
 
-  const existingQuestions = await storage.getItem<Question[]>('questions') || []
+  const existingQuestions = await getQuestions()
   const existingQuestionTexts = new Set(existingQuestions.map(q => q.question_text.en))
 
-  const newQuestions: Question[] = []
+  let insertedCount = 0
   for (const q of predefinedQuestions) {
     if (!existingQuestionTexts.has(q.question_text.en)) {
       existingQuestionTexts.add(q.question_text.en)
       const id = createId()
-      newQuestions.push({
+      await createQuestion({
         ...q,
-        id,
         key: q.key || id,
-        is_active: false,
-        is_locked: false,
-        createdAt: new Date().toISOString(),
-        alreadyPublished: false,
       })
+      insertedCount++
     }
   }
 
-  if (newQuestions.length > 0) {
-    await storage.setItem('questions', [...existingQuestions, ...newQuestions])
-    logger(`${newQuestions.length} new predefined questions loaded successfully.`)
+  if (insertedCount > 0) {
+    log(`${insertedCount} new predefined questions loaded successfully.`)
   }
   else {
-    logger('No new predefined questions to load.')
+    log('No new predefined questions to load.')
   }
 }
 
-// Question operations
 export async function getQuestions(): Promise<Question[]> {
-  await initStorage()
-  return await storage.getItem<Question[]>('questions') || []
-}
+  const db = useDrizzle()
+  const questionRows = await db
+    .select()
+    .from(questions)
+    .orderBy(desc(questions.createdAt), asc(questions.key))
 
-export async function saveQuestions(questions: Question[]): Promise<void> {
-  await initStorage()
-  await storage.setItem('questions', questions)
+  return hydrateQuestions(questionRows)
 }
 
 export async function getActiveQuestion(): Promise<Question | undefined> {
-  const questions = await getQuestions()
-  return questions.find(q => q.is_active)
+  const db = useDrizzle()
+  const [questionRow] = await db
+    .select()
+    .from(questions)
+    .where(eq(questions.isActive, true))
+    .limit(1)
+
+  if (!questionRow) {
+    return undefined
+  }
+
+  const [question] = await hydrateQuestions([questionRow])
+  return question
 }
 
 export async function createQuestion(
   questionData: Omit<Question, 'id' | 'is_active' | 'is_locked' | 'createdAt' | 'alreadyPublished'>,
 ): Promise<Question> {
-  await initStorage()
-  const questions = await storage.getItem<Question[]>('questions') || []
+  const db = useDrizzle()
   const id = createId()
   const resolvedKey = questionData.key || id
+  const timestamp = nowIso()
 
-  if (questions.some(q => q.key === resolvedKey)) {
+  const [existingQuestion] = await db
+    .select({ id: questions.id })
+    .from(questions)
+    .where(eq(questions.key, resolvedKey))
+    .limit(1)
+
+  if (existingQuestion) {
     throw new Error(`A question with key "${resolvedKey}" already exists`)
   }
 
-  const newQuestion: Question = {
-    id,
-    ...questionData,
-    key: resolvedKey,
-    is_locked: false,
-    createdAt: new Date().toISOString(),
-    alreadyPublished: false,
-  }
-  questions.push(newQuestion)
-  await storage.setItem('questions', questions)
-  return newQuestion
-}
+  await db.transaction(async (tx) => {
+    await tx.insert(questions).values({
+      id,
+      key: resolvedKey,
+      questionText: questionData.question_text,
+      note: questionData.note || null,
+      isLocked: false,
+      isActive: false,
+      alreadyPublished: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
 
-export async function publishQuestion(key: string): Promise<Question | undefined> {
-  await initStorage()
-  const questions = await storage.getItem<Question[]>('questions') || []
-
-  // Deactivate all questions
-  questions.forEach((q) => {
-    q.is_active = false
+    if (questionData.answer_options.length > 0) {
+      await tx.insert(questionOptions).values(questionData.answer_options.map((option, index) => ({
+        id: createId(),
+        questionId: id,
+        sortOrder: index,
+        text: option.text,
+        emoji: option.emoji || null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })))
+    }
   })
 
-  // Activate the new question
-  const question = questions.find(q => q.key === key)
-  if (question) {
-    question.is_active = true
-    question.alreadyPublished = true
-    await storage.setItem('questions', questions)
-
-    // Broadcast the results (includes any previously submitted answers for this question)
-    const results = await getResultsForQuestion(question.id, questions)
-    broadcast('results-update', results)
+  const createdQuestion = await getQuestionById(id)
+  if (!createdQuestion) {
+    throw new Error('Failed to create question')
   }
-  return question
+
+  return createdQuestion
 }
 
-/** Deactivate the active question (answers are preserved for potential re-publishing). */
-export async function unpublishActiveQuestion(): Promise<Question | undefined> {
-  await initStorage()
-  const questions = await storage.getItem<Question[]>('questions') || []
-  const activeQuestion = questions.find(q => q.is_active)
+export async function publishQuestion(identifier: string): Promise<Question | undefined> {
+  const db = useDrizzle()
+  const timestamp = nowIso()
 
-  if (activeQuestion) {
-    activeQuestion.is_active = false
-    await storage.setItem('questions', questions)
+  const publishedQuestionId = await db.transaction(async (tx) => {
+    const [questionRow] = await tx
+      .select()
+      .from(questions)
+      .where(or(
+        eq(questions.id, identifier),
+        eq(questions.key, identifier),
+      ))
+      .limit(1)
+
+    if (!questionRow) {
+      return undefined
+    }
+
+    await tx
+      .update(questions)
+      .set({
+        isActive: false,
+        updatedAt: timestamp,
+      })
+      .where(eq(questions.isActive, true))
+
+    await tx
+      .update(questions)
+      .set({
+        isActive: true,
+        alreadyPublished: true,
+        updatedAt: timestamp,
+      })
+      .where(eq(questions.id, questionRow.id))
+
+    return questionRow.id
+  })
+
+  if (!publishedQuestionId) {
+    return undefined
   }
 
-  return activeQuestion
+  return getQuestionById(publishedQuestionId)
+}
+
+export async function unpublishActiveQuestion(): Promise<Question | undefined> {
+  const db = useDrizzle()
+  const timestamp = nowIso()
+
+  const unpublishedQuestionId = await db.transaction(async (tx) => {
+    const [questionRow] = await tx
+      .select()
+      .from(questions)
+      .where(eq(questions.isActive, true))
+      .limit(1)
+
+    if (!questionRow) {
+      return undefined
+    }
+
+    await tx
+      .update(questions)
+      .set({
+        isActive: false,
+        updatedAt: timestamp,
+      })
+      .where(eq(questions.id, questionRow.id))
+
+    return questionRow.id
+  })
+
+  if (!unpublishedQuestionId) {
+    return undefined
+  }
+
+  return getQuestionById(unpublishedQuestionId)
 }
 
 export async function toggleQuestionLock(questionId: string): Promise<Question | undefined> {
-  await initStorage()
-  const questions = await storage.getItem<Question[]>('questions') || []
-  const question = questions.find(q => q.id === questionId)
-
-  if (question) {
-    question.is_locked = !question.is_locked
-    await storage.setItem('questions', questions)
+  const question = await getQuestionById(questionId)
+  if (!question) {
+    return undefined
   }
 
-  return question
+  const db = useDrizzle()
+  await db
+    .update(questions)
+    .set({
+      isLocked: !question.is_locked,
+      updatedAt: nowIso(),
+    })
+    .where(eq(questions.id, questionId))
+
+  return getQuestionById(questionId)
 }
 
-// Answer operations
 export async function getAnswers(): Promise<Answer[]> {
-  await initStorage()
-  return await storage.getItem<Answer[]>('answers') || []
-}
+  const db = useDrizzle()
+  const answerRows = await db
+    .select()
+    .from(answers)
+    .orderBy(asc(answers.createdAt), asc(answers.id))
 
-export async function saveAnswers(answers: Answer[]): Promise<void> {
-  await initStorage()
-  await storage.setItem('answers', answers)
+  return answerRows.map(mapAnswer)
 }
 
 export async function submitAnswer(answerData: Omit<Answer, 'id' | 'timestamp'>): Promise<Answer[]> {
-  await initStorage()
-  const questions = await getQuestions()
-  const question = questions.find(q => q.id === answerData.question_id)
+  const question = await getQuestionById(answerData.question_id)
 
   if (!question) {
     throw new Error('Question not found')
@@ -205,75 +334,79 @@ export async function submitAnswer(answerData: Omit<Answer, 'id' | 'timestamp'>)
     throw new Error('Invalid answer option')
   }
 
-  const answers = await storage.getItem<Answer[]>('answers') || []
+  const db = useDrizzle()
+  const timestamp = nowIso()
 
-  // Check if user already answered this question
-  const existingIndex = answers.findIndex(
-    a => a.question_id === answerData.question_id
-      && a.user_id === answerData.user_id,
-  )
-
-  if (existingIndex >= 0) {
-    // Update existing answer
-    const existingAnswer = answers[existingIndex]
-    if (existingAnswer) {
-      answers[existingIndex] = {
-        ...existingAnswer,
-        selected_answer: answerData.selected_answer,
-        timestamp: new Date().toISOString(),
-      }
-    }
-  }
-  else {
-    // Add new answer
-    const newAnswer: Answer = {
+  await db
+    .insert(answers)
+    .values({
       id: createId(),
-      ...answerData,
-      timestamp: new Date().toISOString(),
-    }
-    answers.push(newAnswer)
-  }
+      questionId: answerData.question_id,
+      userId: answerData.user_id,
+      userNickname: answerData.user_nickname,
+      selectedAnswer: answerData.selected_answer,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    .onConflictDoUpdate({
+      target: [answers.questionId, answers.userId],
+      set: {
+        userNickname: answerData.user_nickname,
+        selectedAnswer: answerData.selected_answer,
+        updatedAt: timestamp,
+      },
+    })
 
-  await storage.setItem('answers', answers)
-  return answers
+  return getAnswers()
 }
 
 export async function getAnswersForQuestion(questionId: string): Promise<Answer[]> {
-  const answers = await getAnswers()
-  return answers.filter(a => a.question_id === questionId)
+  const db = useDrizzle()
+  const answerRows = await db
+    .select()
+    .from(answers)
+    .where(eq(answers.questionId, questionId))
+    .orderBy(asc(answers.createdAt), asc(answers.id))
+
+  return answerRows.map(mapAnswer)
 }
 
 export async function retractAnswer(userId: string, questionId: string): Promise<Answer[]> {
-  await initStorage()
-  const answers = await storage.getItem<Answer[]>('answers') || []
-  const updatedAnswers = answers.filter(
-    a => !(a.user_id === userId && a.question_id === questionId),
-  )
-  await storage.setItem('answers', updatedAnswers)
-  return updatedAnswers
+  const db = useDrizzle()
+
+  await db
+    .delete(answers)
+    .where(and(
+      eq(answers.userId, userId),
+      eq(answers.questionId, questionId),
+    ))
+
+  return getAnswers()
 }
 
-// Admin operations
 export async function validateAdmin(username: string, password: string, event?: H3Event): Promise<boolean> {
-  await initStorage(event)
-  const admin = await storage.getItem<{ username: string, password: string }>('admin')
-  if (!admin) return false
-  return admin.username === username && admin.password === password
+  const config = event
+    ? useRuntimeConfig(event)
+    : useRuntimeConfig()
+
+  return config.adminUsername === username && config.adminPassword === password
 }
 
-// Get results for current question
 export async function getResultsForQuestion(
   questionId: string,
   allQuestions?: Question[],
   allAnswers?: Answer[],
 ): Promise<Results | null> {
-  const questions = allQuestions || await getQuestions()
-  const question = questions.find(q => q.id === questionId)
+  const question = allQuestions
+    ? allQuestions.find(q => q.id === questionId)
+    : await getQuestionById(questionId)
+
   if (!question) return null
 
-  const answers = allAnswers || await getAnswersForQuestion(question.id)
+  const answersForQuestion = allAnswers
+    ? allAnswers.filter(answer => answer.question_id === questionId)
+    : await getAnswersForQuestion(questionId)
 
-  // Count votes for each option
   const results: Record<string, { count: number, emoji?: string }> = {}
   question.answer_options.forEach((option) => {
     if (option.text.en) {
@@ -281,7 +414,7 @@ export async function getResultsForQuestion(
     }
   })
 
-  answers.forEach((answer) => {
+  answersForQuestion.forEach((answer) => {
     if (answer.selected_answer.en && Object.prototype.hasOwnProperty.call(results, answer.selected_answer.en)) {
       const result = results[answer.selected_answer.en]
       if (result) {
@@ -293,7 +426,7 @@ export async function getResultsForQuestion(
   return JSON.parse(JSON.stringify({
     question,
     results,
-    totalVotes: answers.length,
+    totalVotes: answersForQuestion.length,
     totalConnections: (await getPeers()).length,
   }))
 }
@@ -304,9 +437,6 @@ export async function getCurrentResults(): Promise<Results | null> {
   return getResultsForQuestion(activeQuestion.id)
 }
 
-// Emoji cooldown operations
-
-/** Removes expired entries from the cooldown map to prevent unbounded growth. */
 function pruneExpiredCooldowns(cooldownMs: number): void {
   const now = Date.now()
   for (const [id, timestamp] of emojiCooldowns) {
@@ -326,13 +456,12 @@ export function checkEmojiCooldown(userId: string): boolean {
   if (lastSubmission) {
     const now = Date.now()
     if (now - lastSubmission < cooldownMs) {
-      return true // Cooldown is active
+      return true
     }
   }
-  return false // Cooldown is over or user has not submitted before
+  return false
 }
 
-/** Records the current timestamp for the given user in the emoji cooldown map. */
 export function updateEmojiTimestamp(userId: string): void {
   emojiCooldowns.set(userId, Date.now())
 }

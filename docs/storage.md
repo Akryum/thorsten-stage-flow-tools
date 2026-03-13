@@ -1,197 +1,74 @@
 # Storage System
 
-Nitro `useStorage()` with pluggable driver abstraction.
+The application stores quiz state in PostgreSQL and accesses it through Drizzle ORM.
 
-## Storage Architecture
+## Database Tables
 
-### Driver Configuration
+### `questions`
 
-The storage driver is selected based on the `NITRO_PRESET` environment variable:
+- Stores the question prompt, stable key, note, publish state, and timestamps.
+- Uses JSONB for localized text.
+- Enforces a unique `key`.
+- Enforces at most one active question with a partial unique index on `is_active = true`.
 
-- **Cloudflare Workers** (`NITRO_PRESET=cloudflare-module`): Cloudflare KV binding `STAGE_FLOW_DATA`.
-- **Node.js / Docker** (any other preset): Filesystem driver at `.data/db/`.
-- **Local dev** (`pnpm dev`): Always filesystem at `.data/db/` via `devStorage`.
+### `question_options`
 
-Configuration in `nuxt.config.ts`:
+- Stores ordered answer options per question.
+- Uses JSONB for localized option text.
+- Keeps display order with `sort_order`.
 
-```typescript
-const isCloudflare = process.env.NITRO_PRESET?.startsWith('cloudflare')
+### `answers`
 
-nitro: {
-  storage: isCloudflare
-    ? { data: { driver: 'cloudflareKVBinding', binding: 'STAGE_FLOW_DATA' } }
-    : { data: { driver: 'fs', base: './.data/db' } },
-  devStorage: {
-    data: { driver: 'fs', base: './.data/db' },
-  },
-}
-```
-
-### Storage Keys
-
-All data is accessed via `useStorage('data')` with these keys:
-
-| Key          | Content                   |
-| ------------ | ------------------------- |
-| `questions`  | `Question[]` array        |
-| `answers`    | `Answer[]` array          |
-| `admin`      | `{ username, password }`  |
-| `emoji:<id>` | Emoji cooldown timestamps |
-
-### Data Models
-
-#### Question Schema
-
-```json
-{
-  "id": "string (cuid2)",
-  "key": "string (unique identifier, defaults to id)",
-  "question_text": {
-    "en": "string",
-    "de": "string (optional)",
-    "ja": "string (optional)"
-  },
-  "answer_options": [
-    {
-      "text": { "en": "string", "de": "string (optional)" },
-      "emoji": "string (optional)"
-    }
-  ],
-  "is_active": "boolean (optional, only one question active at a time)",
-  "is_locked": "boolean",
-  "createdAt": "ISO 8601 timestamp",
-  "alreadyPublished": "boolean",
-  "note": { "en": "string (optional)" }
-}
-```
-
-All text fields (`question_text`, `answer_options[].text`, `note`) use a `LocalizedString` type: an object with a required `en` key and optional locale keys (e.g., `de`, `ja`).
-
-#### Answer Schema
-
-```json
-{
-  "id": "string (cuid2)",
-  "question_id": "string",
-  "user_id": "string",
-  "user_nickname": "string",
-  "selected_answer": { "en": "string" },
-  "timestamp": "ISO 8601 timestamp"
-}
-```
+- Stores one answer per user per question.
+- Uses JSONB for the selected localized answer text.
+- Enforces uniqueness on `(question_id, user_id)` so repeat submissions overwrite the prior answer.
 
 ## Storage Operations
 
 ### Initialization
 
-- `initStorage()` sets default values for missing keys (empty arrays for questions/answers, default admin credentials from runtime config).
-- Called automatically by the Nitro plugin `server/plugins/init-storage.ts` on server startup.
-- Idempotent - safe to call multiple times.
+- Drizzle migrations run automatically on server startup.
+- Admin credentials remain environment-based and are not stored in PostgreSQL.
 
-### Predefined Questions Loading (Node.js / Docker Only)
+### Question Migration Loading
 
-On Node.js runtimes the startup plugin checks for `data/predefined-questions.json`:
+On startup the app checks `data/question-migrations/*.json`:
 
-1. Renames the file to `.processing` to prevent re-processing.
-1. Validates and merges new questions into storage.
+1. Sorts files lexically.
+1. Validates each file as a JSON array of questions.
+1. Inserts only unapplied migration files.
+1. Tracks each applied file in the `data_migrations` table.
+
+Applied migration files are immutable: if a file's contents change after import, startup fails and a new migration file should be created instead.
+
+### Legacy Predefined Questions Loading
+
+On startup the app checks for `data/predefined-questions.json`:
+
+1. Renames the file to `.processing`.
+1. Validates the question batch.
+1. Inserts only questions whose `question_text.en` is not already present.
 1. Deletes the `.processing` file on success.
 
-On Cloudflare Workers, the filesystem is not available. Seed questions directly into KV using `wrangler kv key put`. See [deployment-cloudflare.md](deployment-cloudflare.md#loading-predefined-questions).
-
-### Data Access Patterns
-
-- **Async reads/writes** via `useStorage('data').getItem()` / `.setItem()`.
-- **No file locking needed** - KV handles consistency; filesystem driver serializes within a single Node.js process.
-- **IDs generated** with `@paralleldrive/cuid2`.
+If parsing or validation fails, the `.processing` file is left in place for inspection and retry.
 
 ## Maintenance
 
-### Backup (Docker / Node.js)
+### Backup
 
 ```bash
-# Manual backup of local storage
-cp -r .data/db/ backups/data-$(date +%Y%m%d)
+docker exec stage-flow-tools-postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backups/data-$(date +%Y%m%d).sql
 ```
 
-### Backup (Cloudflare KV)
+### Data Reset
 
 ```bash
-# Export data to local backup files
-backup_dir="backups/kv-$(date +%Y%m%d)"
-mkdir -p "$backup_dir"
-npx wrangler kv key get --binding=STAGE_FLOW_DATA "questions" > "$backup_dir/questions.json"
-npx wrangler kv key get --binding=STAGE_FLOW_DATA "answers" > "$backup_dir/answers.json"
-npx wrangler kv key get --binding=STAGE_FLOW_DATA "admin" > "$backup_dir/admin.json"
+docker compose down -v
+docker compose up -d postgres
 ```
-
-Restore from backup:
-
-```bash
-npx wrangler kv key put --binding=STAGE_FLOW_DATA "questions" --path="$backup_dir/questions.json"
-npx wrangler kv key put --binding=STAGE_FLOW_DATA "answers" --path="$backup_dir/answers.json"
-```
-
-> Emoji cooldown keys (`emoji:*`) are transient and excluded from backups.
-
-### Data Reset (Docker / Node.js)
-
-```bash
-# Full reset
-rm -rf .data/db/
-# Application recreates defaults on next start
-```
-
-### Data Reset (Cloudflare KV)
-
-```bash
-npx wrangler kv key delete --binding=STAGE_FLOW_DATA "questions"
-npx wrangler kv key delete --binding=STAGE_FLOW_DATA "answers"
-npx wrangler kv key delete --binding=STAGE_FLOW_DATA "admin"
-```
-
-Alternatively, use the push script to reset and replace data in one step (admin is overridden, never deleted):
-
-```bash
-pnpm run deploy:push-to-cloudflare -- --questions ./my-questions.json --admin ./my-admin.json
-```
-
-See [deployment-cloudflare.md](deployment-cloudflare.md#pushing-questions-from-local-to-cloudflare) for details.
-
-> The CI/CD workflow (`deploy-cloudflare.yml`) resets `questions` and `answers` to `[]` after every deploy. Admin credentials are preserved.
-
-## Migration Path
-
-### To SQLite
-
-1. Export JSON data
-2. Create database schema
-3. Import data
-4. Update storage utilities
-
-### To PostgreSQL
-
-1. Set up database
-2. Create tables
-3. Migrate JSON data
-4. Update connection logic
-
-### To Cloud Storage
-
-- **Supabase** - PostgreSQL with real-time
-- **PlanetScale** - Serverless MySQL
-- **Turso** - Edge SQLite
 
 ## Performance Characteristics
 
-### Filesystem Driver (Dev / Docker)
-
-- **Read Speed** - < 1ms for typical files
-- **Write Speed** - < 10ms for updates
-- **Concurrent Users** - 100-500 comfortable range
-
-### Cloudflare KV
-
-- **Read Latency** - ~10ms (cached at edge)
-- **Write Latency** - ~50ms (eventually consistent, ~60s propagation)
-- **Concurrent Users** - 100-500+ comfortable range
-- **KV is eventually consistent** - acceptable for a quiz tool where slight delays in data propagation do not affect the user experience
+- PostgreSQL handles durability and transactional writes.
+- The current single-instance architecture is a good fit for the app's quiz workload.
+- WebSocket peer state is still kept in memory in the app process.

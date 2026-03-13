@@ -43,6 +43,12 @@ openssl rand -base64 48
 
 Copy the generated secret and update `NUXT_JWT_SECRET` in your `.env` file.
 
+### Start PostgreSQL
+
+```bash
+docker compose up -d postgres
+```
+
 ## Development Commands
 
 - `pnpm dev` - Start development server
@@ -58,25 +64,23 @@ Copy the generated secret and update `NUXT_JWT_SECRET` in your `.env` file.
 
 ### Storage Location
 
-During local development, data is stored in `.data/db/` (created automatically, gitignored):
+During local development, data is stored in PostgreSQL via `DATABASE_URL`.
 
-- `questions` - Quiz questions
-- `answers` - User answers
-- `admin` - Admin credentials
+Question sets can be imported from `data/question-migrations/*.json` with `pnpm questions:migrate` (see [question-migrations.md](question-migrations.md)).
 
-Predefined questions can be loaded from `data/predefined-questions.json` (see [predefined-questions.md](predefined-questions.md)).
+`data/predefined-questions.json` is still supported as a legacy fallback (see [predefined-questions.md](predefined-questions.md)).
 
 ### Reset Data
 
 ```bash
-rm -rf .data/db/
-# Application recreates defaults on next start
+docker compose down -v
+docker compose up -d postgres
 ```
 
 ### Backup Data
 
 ```bash
-cp -r .data/db/ data-backup-$(date +%Y%m%d)
+docker exec stage-flow-tools-postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > data-backup-$(date +%Y%m%d).sql
 ```
 
 ## Troubleshooting
@@ -89,13 +93,11 @@ Change port in `.env`:
 PORT=3001
 ```
 
-### Permission Errors
+### Database Connection Issues
 
-Check write permissions on the `.data/` directory:
-
-```bash
-chmod 755 .data/
-```
+- Check that PostgreSQL is running: `docker compose ps`
+- Verify `DATABASE_URL` in `.env`
+- Review app logs for migration or connection errors
 
 ### WebSocket Connection Issues
 

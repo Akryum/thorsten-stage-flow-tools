@@ -1,6 +1,22 @@
-version: "3.9"
-
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: stage-flow-tools-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-stage_flow_tools}
+      - POSTGRES_USER=${POSTGRES_USER:-stage_flow}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-stage_flow}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-stage_flow} -d ${POSTGRES_DB:-stage_flow_tools}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build:
       context: .
@@ -8,12 +24,19 @@ services:
     image: stage-flow-tools
     container_name: stage-flow-tools
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
+      - default
       - traefik-public
     volumes:
       - ./data:/app/data
     environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://stage_flow:stage_flow@postgres:5432/stage_flow_tools}
       - NUXT_JWT_SECRET=${NUXT_JWT_SECRET}
+      - NUXT_ADMIN_USERNAME=${NUXT_ADMIN_USERNAME:-admin}
+      - NUXT_ADMIN_PASSWORD=${NUXT_ADMIN_PASSWORD:-123}
     labels:
       - traefik.enable=true
       - traefik.http.routers.stage-flow-tools.rule=Host(`quiz.your-domain.com`)
@@ -24,3 +47,6 @@ services:
 networks:
   traefik-public:
     external: true
+
+volumes:
+  postgres-data: {}

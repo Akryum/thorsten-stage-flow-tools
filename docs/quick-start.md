@@ -28,7 +28,13 @@ Get the quiz application running in minutes.
    cp .env.example .env
    ```
 
-4. **Start development server**
+4. **Start PostgreSQL**
+
+   ```bash
+   docker compose up -d postgres
+   ```
+
+5. **Start development server**
    ```bash
    pnpm dev
    ```

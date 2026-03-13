@@ -1,7 +1,5 @@
 import { version } from './package.json'
 
-const isCloudflare = process.env.NITRO_PRESET?.startsWith('cloudflare')
-
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   modules: [
@@ -25,6 +23,7 @@ export default defineNuxtConfig({
     // Private keys (only available server-side)
     adminUsername: 'admin',
     adminPassword: '123',
+    databaseUrl: process.env.DATABASE_URL || '',
     jwtSecret: 'tryUJ0zQbstPbTOrezme+Fv+KndzDNRx5lmSeelr2ial2/2yV8HqLeQ2felJafqf',
 
     // Public keys (available on both client and server)
@@ -47,12 +46,6 @@ export default defineNuxtConfig({
   nitro: {
     experimental: {
       websocket: true,
-    },
-    storage: isCloudflare
-      ? { data: { driver: 'cloudflareKVBinding', binding: 'STAGE_FLOW_DATA' } }
-      : { data: { driver: 'fs', base: './.data/db' } },
-    devStorage: {
-      data: { driver: 'fs', base: './.data/db' },
     },
   },
 

@@ -35,19 +35,15 @@ Upon merging the release PR, the GitHub Actions workflow performs the following 
 
 The `main` branch is now updated with the latest version, and a new, versioned Docker image is available for deployment.
 
-### 5. Cloudflare Deployment (Automatic)
+### 5. Docker Image Publish
 
-Every push to `main` (including merged PRs and release merges) triggers the `deploy-cloudflare.yml` workflow:
+Every release publishes a Docker image to GitHub Container Registry. Deployments consume that image together with PostgreSQL.
 
-1. The app is built for Cloudflare Workers.
-1. The Worker is deployed to Cloudflare.
-1. KV data (`questions`, `answers`) is reset to empty arrays.
-1. Admin credentials are preserved.
+### 6. Optional: Load Questions Before an Event
 
-After deployment, use the push script to seed quiz questions:
+If you maintain quiz questions in a local file, copy them into `data/predefined-questions.json` before restarting the app:
 
 ```bash
-pnpm run deploy:push-to-cloudflare -- --questions ./my-questions.json
+cp ./my-questions.json ./data/predefined-questions.json
+docker compose restart app
 ```
-
-See the [Cloudflare Deployment Guide](deployment-cloudflare.md#automated-deployment-via-github-actions-cicd) for GitHub secrets setup.

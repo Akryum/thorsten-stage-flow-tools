@@ -37,6 +37,7 @@ RUN corepack prepare pnpm@10.13.1 --activate
 
 # Copy the built output from the build stage
 COPY --from=build /app/.output ./.output
+COPY --from=build /app/drizzle ./drizzle
 
 # Copy production dependencies
 COPY --from=build /app/package.json ./

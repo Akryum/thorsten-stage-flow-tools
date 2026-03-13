@@ -21,6 +21,10 @@ export interface Question {
 
 export type InputQuestion = Omit<Question, 'id' | 'is_active' | 'is_locked' | 'createdAt' | 'alreadyPublished'>
 
+export type DataMigrationQuestion = InputQuestion & {
+  key: string
+}
+
 export interface Answer {
   id: string
   question_id: string
@@ -29,6 +33,8 @@ export interface Answer {
   selected_answer: LocalizedString
   timestamp: string
 }
+
+export type DataMigrationFile = DataMigrationQuestion[]
 
 export interface Results {
   question: Question
