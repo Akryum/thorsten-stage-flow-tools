@@ -25,11 +25,17 @@ const isLoading = ref(false)
 const hasError = ref(false)
 const leaderboard = ref<LeaderboardEntry[]>([])
 const totalQuestionsWithCorrectAnswers = ref(0)
+const isWinnerModalOpen = ref(false)
+const selectedWinner = ref<LeaderboardEntry | null>(null)
+
+const topRankedEntries = computed(() => leaderboard.value.filter(entry => entry.rank === 1))
 
 /** Fetch leaderboard data from the API. */
 async function fetchLeaderboard() {
   isLoading.value = true
   hasError.value = false
+  isWinnerModalOpen.value = false
+  selectedWinner.value = null
   try {
     const data = await $fetch<LeaderboardResponse>('/api/results/leaderboard')
     leaderboard.value = data.leaderboard
@@ -49,6 +55,18 @@ async function fetchLeaderboard() {
 onMounted(() => {
   fetchLeaderboard()
 })
+
+function openWinnerModal() {
+  if (topRankedEntries.value.length === 0) return
+
+  const randomIndex = Math.floor(Math.random() * topRankedEntries.value.length)
+  selectedWinner.value = topRankedEntries.value[randomIndex] ?? null
+  isWinnerModalOpen.value = selectedWinner.value !== null
+}
+
+function closeWinnerModal() {
+  isWinnerModalOpen.value = false
+}
 </script>
 
 <template>
@@ -59,14 +77,23 @@ onMounted(() => {
       <p class="text-sm text-gray-500">
         {{ t('scoredQuestions', { count: totalQuestionsWithCorrectAnswers }) }}
       </p>
-      <UiButton
-        :disabled="isLoading"
-        size="small"
-        variant="secondary"
-        @click="fetchLeaderboard"
-      >
-        {{ t('refresh') }}
-      </UiButton>
+      <div class="flex gap-2">
+        <UiButton
+          :disabled="isLoading || leaderboard.length === 0"
+          size="small"
+          @click="openWinnerModal"
+        >
+          {{ t('pickWinner') }}
+        </UiButton>
+        <UiButton
+          :disabled="isLoading"
+          size="small"
+          variant="secondary"
+          @click="fetchLeaderboard"
+        >
+          {{ t('refresh') }}
+        </UiButton>
+      </div>
     </div>
 
     <UiSection>
@@ -122,6 +149,41 @@ onMounted(() => {
         </tbody>
       </table>
     </UiSection>
+
+    <div
+      v-if="isWinnerModalOpen && selectedWinner"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-5"
+      @click.self="closeWinnerModal"
+    >
+      <UiSection class="w-full max-w-md">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm uppercase tracking-wide text-gray-500">
+              🏆
+              {{ t('winnerTitle') }}
+            </p>
+            <h2 class="mt-2 text-3xl font-bold uppercase">
+              {{ selectedWinner.nickname }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">
+              {{ selectedWinner.userId }}
+            </p>
+          </div>
+
+          <UiButton
+            size="small"
+            variant="secondary"
+            @click="closeWinnerModal"
+          >
+            {{ t('close') }}
+          </UiButton>
+        </div>
+
+        <p class="mt-6 text-lg">
+          {{ t('winnerScore', { count: selectedWinner.correctAnswers }) }}
+        </p>
+      </UiSection>
+    </div>
   </div>
 </template>
 
@@ -136,6 +198,10 @@ en:
   empty: No answers submitted yet.
   error: Failed to load leaderboard. Please try again.
   scoredQuestions: "Questions with correct answers: {count}"
+  pickWinner: Pick winner
+  winnerTitle: Winner
+  winnerScore: "Correct answers: {count}"
+  close: Close
 de:
   title: Bestenliste
   rank: Rang
@@ -146,6 +212,10 @@ de:
   empty: Noch keine Antworten eingereicht.
   error: Bestenliste konnte nicht geladen werden. Bitte erneut versuchen.
   scoredQuestions: "Fragen mit richtigen Antworten: {count}"
+  pickWinner: Gewinner ziehen
+  winnerTitle: Gewinner
+  winnerScore: "Richtige Antworten: {count}"
+  close: Schließen
 ja:
   title: リーダーボード
   rank: 順位
@@ -156,6 +226,10 @@ ja:
   empty: まだ回答が提出されていません。
   error: リーダーボードの読み込みに失敗しました。もう一度お試しください。
   scoredQuestions: "正解のある質問数: {count}"
+  pickWinner: 勝者を選ぶ
+  winnerTitle: 勝者
+  winnerScore: "正解数: {count}"
+  close: 閉じる
 </i18n>
 
 <style scoped>
