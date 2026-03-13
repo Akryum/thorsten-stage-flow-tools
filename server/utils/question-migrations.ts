@@ -29,6 +29,7 @@ interface ExistingQuestionRecord {
 export interface QuestionMigrationResult {
   migrationName: string
   createdCount: number
+  updatedCount: number
   skipped: boolean
 }
 
@@ -264,6 +265,7 @@ export async function applyQuestionMigration(
     return {
       migrationName,
       createdCount: 0,
+      updatedCount: 0,
       skipped: true,
     }
   }
@@ -271,25 +273,48 @@ export async function applyQuestionMigration(
   const normalizedQuestions = normalizeMigrationFile(JSON.parse(rawData) as unknown, migrationName)
   const existingQuestionsByKey = await loadExistingQuestionsByKey(normalizedQuestions.map(question => question.key))
   let createdCount = 0
+  let updatedCount = 0
 
   await db.transaction(async (tx) => {
     for (const question of normalizedQuestions) {
       const existingQuestion = existingQuestionsByKey.get(question.key)
+      const timestamp = new Date().toISOString()
 
       if (existingQuestion) {
         const existingComparable = stableStringify(getComparableQuestion(existingQuestion))
         const incomingComparable = stableStringify(getComparableQuestion(question))
 
-        if (existingComparable !== incomingComparable) {
-          throw new Error(
-            `Question migration "${migrationName}" conflicts with existing question "${question.key}".`,
-          )
+        if (existingComparable === incomingComparable) {
+          continue
         }
 
+        await tx
+          .update(questions)
+          .set({
+            questionText: question.question_text,
+            note: question.note || null,
+            updatedAt: timestamp,
+          })
+          .where(eq(questions.id, existingQuestion.id))
+
+        await tx
+          .delete(questionOptions)
+          .where(eq(questionOptions.questionId, existingQuestion.id))
+
+        await tx.insert(questionOptions).values(question.answer_options.map((option, optionIndex) => ({
+          id: createId(),
+          questionId: existingQuestion.id,
+          sortOrder: optionIndex,
+          text: option.text,
+          emoji: option.emoji || null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })))
+
+        updatedCount++
         continue
       }
 
-      const timestamp = new Date().toISOString()
       const questionId = createId()
 
       await tx.insert(questions).values({
@@ -324,10 +349,14 @@ export async function applyQuestionMigration(
     })
   })
 
-  log(`Applied question migration "${migrationName}" (${createdCount} new question(s)).`)
+  log(
+    `Applied question migration "${migrationName}" `
+    + `(${createdCount} new question(s), ${updatedCount} updated question(s)).`,
+  )
   return {
     migrationName,
     createdCount,
+    updatedCount,
     skipped: false,
   }
 }

@@ -266,6 +266,7 @@ async function handleImportQuestions() {
     const result = await $fetch<{
       migrationName: string
       createdCount: number
+      updatedCount: number
       skipped: boolean
     }>('/api/questions/import', {
       method: 'POST',
@@ -281,7 +282,11 @@ async function handleImportQuestions() {
       type: 'success',
       message: result.skipped
         ? t('importSkipped', { name: result.migrationName })
-        : t('importSuccess', { name: result.migrationName, count: result.createdCount }),
+        : t('importSuccess', {
+            name: result.migrationName,
+            created: result.createdCount,
+            updated: result.updatedCount,
+          }),
     }
 
     if (!result.skipped) {
@@ -560,7 +565,7 @@ en:
   importQuestionsButton: Import Questions
   importingQuestions: Importing...
   clearImportForm: Clear
-  importSuccess: 'Imported "{name}" with {count} new question(s).'
+  importSuccess: 'Imported "{name}" with {created} new and {updated} updated question(s).'
   importSkipped: 'Skipped "{name}" because it was already applied.'
   failedImportQuestions: Failed to import questions.
   failedReadImportFile: Failed to read the selected JSON file.
@@ -609,7 +614,7 @@ de:
   importQuestionsButton: Fragen importieren
   importingQuestions: Importiere...
   clearImportForm: Leeren
-  importSuccess: '"{name}" mit {count} neuen Frage(n) importiert.'
+  importSuccess: '"{name}" mit {created} neuen und {updated} aktualisierten Frage(n) importiert.'
   importSkipped: '"{name}" wurde übersprungen, da die Migration bereits angewendet wurde.'
   failedImportQuestions: Fragen konnten nicht importiert werden.
   failedReadImportFile: Die ausgewählte JSON-Datei konnte nicht gelesen werden.
@@ -660,7 +665,7 @@ ja:
   importQuestionsButton: 質問をインポート
   importingQuestions: インポート中...
   clearImportForm: クリア
-  importSuccess: '"{name}" をインポートしました。新しい質問は {count} 件です。'
+  importSuccess: '"{name}" をインポートしました。新規 {created} 件、更新 {updated} 件です。'
   importSkipped: '"{name}" は既に適用済みのためスキップされました。'
   failedImportQuestions: 質問のインポートに失敗しました。
   failedReadImportFile: 選択したJSONファイルを読み込めませんでした。

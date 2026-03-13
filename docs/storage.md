@@ -36,7 +36,7 @@ On startup the app checks `data/question-migrations/*.json`:
 
 1. Sorts files lexically.
 1. Validates each file as a JSON array of questions.
-1. Inserts only unapplied migration files.
+1. Inserts new questions and updates existing questions with matching `key` values for unapplied migration files.
 1. Tracks each applied file in the `data_migrations` table.
 
 Applied migration files are immutable: if a file's contents change after import, startup fails and a new migration file should be created instead.

@@ -50,7 +50,7 @@ Each file uses the same top-level array format as the existing predefined questi
 - Re-running the same file is safe: it is skipped after the first successful import.
 - Editing an already applied migration file is treated as an error. Create a new file instead.
 - If a question already exists with the same `key` and identical content, the migration reuses it.
-- If the `key` already exists with different content, the migration stops with an error.
+- If the `key` already exists with different content, the migration updates that existing question in place.
 
 ## Import Commands
 
