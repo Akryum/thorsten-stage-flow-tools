@@ -21,10 +21,10 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     // Private keys (only available server-side)
-    adminUsername: 'admin',
-    adminPassword: '123',
+    adminUsername: process.env.ADMIN_USERNAME || 'admin',
+    adminPassword: process.env.ADMIN_PASSWORD || '123',
     databaseUrl: process.env.DATABASE_URL || '',
-    jwtSecret: 'tryUJ0zQbstPbTOrezme+Fv+KndzDNRx5lmSeelr2ial2/2yV8HqLeQ2felJafqf',
+    jwtSecret: process.env.JWT_SECRET || 'tryUJ0zQbstPbTOrezme+Fv+KndzDNRx5lmSeelr2ial2/2yV8HqLeQ2felJafqf',
 
     // Public keys (available on both client and server)
     public: {
