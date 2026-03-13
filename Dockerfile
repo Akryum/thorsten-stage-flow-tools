@@ -22,6 +22,9 @@ COPY . .
 # Build the application for production
 RUN pnpm build
 
+# Migrate DB
+RUN pnpm db:migrate
+
 # --- Production Stage ---
 # This is the final, minimal image. It only copies the built application
 # from the 'build' stage and installs production-only dependencies.
