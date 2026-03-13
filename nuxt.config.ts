@@ -24,6 +24,7 @@ export default defineNuxtConfig({
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
     adminPassword: process.env.ADMIN_PASSWORD || '123',
     databaseUrl: process.env.DATABASE_URL || '',
+    drizzleStudioInternalPort: process.env.DRIZZLE_STUDIO_INTERNAL_PORT || '64983',
     jwtSecret: process.env.JWT_SECRET || 'tryUJ0zQbstPbTOrezme+Fv+KndzDNRx5lmSeelr2ial2/2yV8HqLeQ2felJafqf',
 
     // Public keys (available on both client and server)
