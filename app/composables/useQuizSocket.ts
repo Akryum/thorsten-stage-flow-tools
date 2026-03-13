@@ -59,6 +59,15 @@ export const useQuizSocket = (channel = 'default') => {
       else if (parsed.event === 'results-update') {
         results.value = parsed.data
       }
+      else if (parsed.event === 'answers-reset') {
+        const questionId = parsed.data?.questionId
+        if (typeof questionId === 'string') {
+          sessionStorage.removeItem(`answer-${questionId}`)
+          if (activeQuestion.value?.id === questionId) {
+            selectedAnswer.value = null
+          }
+        }
+      }
       else if (parsed.event === 'connections-update') {
         totalConnections.value = parsed.data.totalConnections
       }

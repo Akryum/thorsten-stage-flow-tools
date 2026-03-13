@@ -371,6 +371,14 @@ export async function getAnswersForQuestion(questionId: string): Promise<Answer[
   return answerRows.map(mapAnswer)
 }
 
+export async function clearAnswersForQuestion(questionId: string): Promise<void> {
+  const db = useDrizzle()
+
+  await db
+    .delete(answers)
+    .where(eq(answers.questionId, questionId))
+}
+
 export async function retractAnswer(userId: string, questionId: string): Promise<Answer[]> {
   const db = useDrizzle()
 
